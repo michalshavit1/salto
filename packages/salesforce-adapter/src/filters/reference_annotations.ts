@@ -19,12 +19,15 @@ import {
 import _ from 'lodash'
 import { collections, multiIndex } from '@salto-io/lowerdash'
 import { FilterCreator } from '../filter'
-import { FIELD_ANNOTATIONS, FOREIGN_KEY_DOMAIN, CUSTOM_OBJECT } from '../constants'
+import { FIELD_ANNOTATIONS, FOREIGN_KEY_DOMAIN, CUSTOM_OBJECT, FIELD_DEPENDENCY_FIELDS, FILTER_ITEM_FIELDS, API_NAME_SEPARATOR } from '../constants'
 import { apiName, metadataType, isMetadataObjectType, isCustomObject } from '../transformers/transformer'
 import { buildElementsSourceForFetch } from './utils'
 
 const { makeArray } = collections.array
-const { REFERENCE_TO } = FIELD_ANNOTATIONS
+const { REFERENCE_TO, SUMMARIZED_FIELD, SUMMARY_FOREIGN_KEY } = FIELD_ANNOTATIONS
+const { CONTROLLING_FIELD } = FIELD_DEPENDENCY_FIELDS
+const { FIELD, VALUE_FIELD } = FILTER_ITEM_FIELDS
+
 const { awu } = collections.asynciterable
 
 const isMetadataTypeOrCustomObject = async (elem: Element): Promise<boolean> => (
@@ -37,7 +40,7 @@ const isMetadataTypeOrCustomObject = async (elem: Element): Promise<boolean> => 
  * @param elements      The fetched elements
  * @param typeToElemID  Known element ids by metadata type
  */
-const convertAnnotationsToReferences = async (
+const convertAnnotationsToTypeReferences = async (
   elements: Element[],
   typeToElemID: multiIndex.Index<[string, string], ElemID>,
   annotationNames: string[],
@@ -66,6 +69,34 @@ const convertAnnotationsToReferences = async (
     })
 }
 
+const convertAnnotationsToFieldReferences = async (
+  elements: Element[],
+  annotationNames: string[],
+): Promise<void> => {
+  const resolveFieldReference = (ref: string | ReferenceExpression):
+    string | ReferenceExpression => {
+    if (_.isString(ref)) {
+      const refArr = ref.split(API_NAME_SEPARATOR)
+      if (refArr.length === 2) {
+        const referenceElemId = new ElemID('salesforce', refArr[0], 'field', refArr[1])
+        return new ReferenceExpression(referenceElemId)
+      }
+    }
+    return ref
+  }
+
+  await awu(elements)
+    .filter(isObjectType)
+    .filter(isMetadataTypeOrCustomObject)
+    .flatMap((obj: ObjectType) => Object.values(obj.fields))
+    .filter((field: Field) => annotationNames.some(name => field.annotations[name] !== undefined))
+    .forEach((field: Field): void => {
+      annotationNames.filter(name => field.annotations[name] !== undefined).forEach(name => {
+        field.annotations[name] = makeArray(field.annotations[name]).map(resolveFieldReference)
+      })
+    })
+}
+
 /**
  * Convert referenceTo and foreignKeyDomain annotations into reference expressions.
  */
@@ -78,7 +109,10 @@ const filter: FilterCreator = ({ config }) => ({
       key: async obj => [await metadataType(obj), await apiName(obj)],
       map: obj => obj.elemID,
     })
-    await convertAnnotationsToReferences(elements, typeToElemID, [REFERENCE_TO, FOREIGN_KEY_DOMAIN])
+    await convertAnnotationsToTypeReferences(elements, typeToElemID, [
+      REFERENCE_TO, FOREIGN_KEY_DOMAIN])
+    await convertAnnotationsToFieldReferences(elements, [
+      SUMMARIZED_FIELD, SUMMARY_FOREIGN_KEY, CONTROLLING_FIELD, FIELD, VALUE_FIELD])
   },
 })
 
