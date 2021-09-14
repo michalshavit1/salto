@@ -92,7 +92,7 @@ const convertAnnotationsToFieldReferences = async (
     .filter((field: Field) => annotationNames.some(name => field.annotations[name] !== undefined))
     .forEach((field: Field): void => {
       annotationNames.filter(name => field.annotations[name] !== undefined).forEach(name => {
-        field.annotations[name] = makeArray(field.annotations[name]).map(resolveFieldReference)
+        field.annotations[name] = resolveFieldReference(field.annotations[name])
       })
     })
 }
